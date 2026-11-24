@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this benchmark dataset, psychometric evaluation harness, or manuscript in your research, please cite it as below."
+title: "Testing the Tester: Why Holistic LLM Judges Reward Broken Answer Keys—and How Contrastive Boundary Pinning Fixes Them"
+version: "1.0.0"
+date-released: "2026-11-24"
+license: "Apache-2.0 AND CC-BY-4.0"
+repository-code: "https://github.com/justsuyash/syllogistic-qg-benchmark"
+keywords:
+  - "question generation"
+  - "psychometrics"
+  - "item discrimination"
+  - "cyclic latin square"
+  - "CUPED variance reduction"
+  - "contrastive boundary pinning"
+  - "factored 2x2 stems"
+  - "ASD-STE100"
+  - "ALFA alignment"
+  - "MediQ"
+  - "MedQA"
+authors:
+  - name: "Suyash"
+preferred-citation:
+  type: article
+  title: "Testing the Tester: Why Holistic LLM Judges Reward Broken Answer Keys—and How Contrastive Boundary Pinning Fixes Them"
+  authors:
+    - name: "Suyash"
+  year: 2026
+  journal: "arXiv preprint"

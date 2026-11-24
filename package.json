@@ -1,0 +1,34 @@
+{
+  "name": "syllogistic-qg-benchmark",
+  "version": "1.0.0",
+  "description": "Testing the Tester: Why Holistic LLM Judges Reward Broken Answer Keys—and How Contrastive Boundary Pinning Fixes Them (400-Run, 5-Arm 5x5 Cyclic Latin-Square Benchmark)",
+  "private": false,
+  "license": "Apache-2.0 AND CC-BY-4.0",
+  "scripts": {
+    "verify": "tsx src/verify-paper1.ts",
+    "replicate:live": "tsx src/replicate-live.ts",
+    "benchmark:live": "tsx scripts/run-live-5arm.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "question-generation",
+    "psychometrics",
+    "item-discrimination",
+    "latin-square",
+    "cuped",
+    "contrastive-boundary-pinning",
+    "factored-2x2-stems",
+    "asd-ste100",
+    "alfa-alignment",
+    "mediq",
+    "medqa",
+    "llm-evaluation"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

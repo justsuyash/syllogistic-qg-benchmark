@@ -1,0 +1,329 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{microtype}
+
+\emergencystretch=2em
+\sloppy
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+\title{\textbf{Testing the Tester: Why Holistic LLM Judges Reward Broken Answer Keys---and How Contrastive Boundary Pinning Fixes Them}}
+
+\author{
+  Suyash \\
+  \texttt{https://github.com/justsuyash/syllogistic-qg-benchmark}
+}
+
+\date{November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Recent work on aligning large language models (LLMs) to ask diagnostic questions---most notably ALFA \cite{li2025alfa} on clinical inquiry (\texttt{MediQ})---demonstrates that decomposing question quality into fine-grained checklist attributes improves question-asking over single-shot prompting. However, when extending automated question generation from open-ended clinical follow-ups to four-option multiple-choice assessments (MCQs) across clinical vignettes (\texttt{MedQA-USMLE}), K--12 school curricula (Classes 6--10), and university coursework (12 disciplines), this study uncovers three structural failure modes in rubric-driven prompting and LLM-as-a-judge evaluation: (1)~\emph{Rubric--Validity Inversion}, where a blinded 5-way LLM judge (\texttt{openai/gpt-4o-mini}, $T=0$) awards its highest holistic rubric score ($86.52$, winning $29/80$ cases) to the single-shot baseline (\texttt{arm-0-single-shot}) despite that baseline suffering a $23.3\%$ broken or ambiguous answer-key rate ($76.7\%$ valid keys, $D = 0.000$), while unguarded Pass-2 rubric self-repair (\texttt{arm-2-checklist-unguarded-pass2}) degrades cold-solver single-key validity from $88.3\%$ to $85.0\%$ ($65.0\%$ on \texttt{MedQA-USMLE}); (2)~\emph{the In-Stem Spoiler Paradox} (\texttt{arm-3-cbp-rationale-stem}), where two-speaker stems that inline speaker rationales (\emph{``Speaker 1 says $X$ because $R_1$''}) achieve $95.0\%$ single-key validity ($100.0\%$ on \texttt{MedQA-USMLE}) but leak causal surface cues to unprimed novices, collapsing novice distractor foil-bite rate to $8.3\%$ ($0.0\%$ on K--12 and first-year university passages; $D = +0.033$); and (3)~\emph{severe multi-candidate judge positional bias}, where the 5-way LLM judge awards $67.5\%$ ($54/80$) of all first-place wins to Candidate Slots 1 and 2 despite exact uniform rotation.
+
+This paper addresses these challenges in a reproducible 400-run ($80\text{ verbatim cases} \times 5\text{ arms}$) live benchmark under an exact $5\times 5$ cyclic Latin square ($[16,16,16,16,16]$ slot appearances overall and $[4,4,4,4,4]$ per 20-case sub-track) with pre-treatment CUPED variance reduction \cite{deng2013cuped}. First, I introduce \emph{Register-Decoupled Contrastive Boundary Pinning} (\texttt{CBP}), a five-slot pre-generation planning architecture comprising (1)~\emph{Contrastive Confusion Locus} ($\mathcal{C}$), (2)~\emph{Passage-Grounded Entailment} ($\mathcal{G}$), (3)~\emph{Register-Decoupled Invariant} ($\mathcal{R}_{\text{STE}}$, grounded in \texttt{ASD-STE100} Simplified Technical English to eliminate academic-register test-wiseness cues), (4)~\emph{Eliminative Boundary Witness} ($w^\star$), and (5)~\emph{Structured Fault-Injection Taxonomy} ($\mathcal{F}_1\dots\mathcal{F}_5$). Gated by a monotonic blind cold-solver (\texttt{Solver B}) rollback check, \texttt{CBP} raises overall cold-solve key validity across $60$ MCQ cases from $76.7\%$ (\texttt{arm-0-single-shot}) and $88.3\%$ (\texttt{arm-1-alfa-checklist}) to $95.0\%$ (\texttt{arm-3-cbp-rationale-stem}) and $91.7\%$ (\texttt{arm-4-cbp-factored-2x2}, $\pm 3.2\%$ binomial SE) using zero ALFA checklist attributes. Second, I introduce the \emph{Factored $2\times 2$ Stem} (\texttt{arm-4-cbp-factored-2x2}), which strips all causal rationales from \texttt{questionStem} (\texttt{sanitizePredictionOnlyStem}) and crosses $\text{Speaker } \{1,2\} \times \text{Reason } \{R_1,R_2\}$ across the four options. Factoring rationales out of the stem lifts overall novice foil-bite rate from $8.3\%$ to $15.0\%$ ($0.0\% \to 25.0\%$ on Track 2A), doubles overall item discrimination $D$ from $+0.033$ to $+0.067$ (the highest of any arm; $D = +0.100$ across all 40 school and university PDF spans), and achieves $97.4/100$ \texttt{ASD-STE100} clarity ($13.0$ words/sentence). All $400$ frozen transcripts, verbatim prompts, a live replication CLI (\texttt{npm run replicate:live}), and a one-command deterministic verifier (\texttt{npm run verify}) are publicly released.
+\end{abstract}
+
+\section{Introduction}
+Generating a diagnostic assessment item---whether in an interactive clinical consultation \cite{li2024mediq,li2025alfa} or in a four-option multiple-choice test \cite{haladyna2002developing,lord1980applications,gierl2017developing,jin2021medqa}---requires satisfying two opposing psychometric constraints simultaneously. First, the item must exhibit \emph{single-key validity} ($P_{\text{valid}}$): a blind domain solver reading only the source passage and shuffled options must identify a unique, unambiguous correct answer without dual-valid distractors. Second, a multiple-choice item must exhibit \emph{diagnostic foil bite} ($P_{\text{foil}} = 1 - P_{\text{novice}}$): its distractors must instantiate plausible cognitive faults that attract an unprimed test-taker who relies on surface heuristics, yielding positive item discrimination \cite{lord1980applications}:
+\begin{equation}
+  D = P_{\text{valid}} - P_{\text{novice}} = P_{\text{valid}} - (1 - P_{\text{foil}}).
+  \label{eq:discrimination}
+\end{equation}
+When an item lacks an eliminative boundary condition in the stem ($P_{\text{valid}} < 1$), domain experts are penalized by dual-valid keys; when its distractors exhibit lexical register mismatch or its stem leaks the governing causal rationale ($P_{\text{foil}} \to 0$), test-wise novices guess the key without domain mastery ($D \le 0$).
+
+In recent work, Li et al.\ \cite{li2025alfa} proposed ALFA (\emph{Aligning LLMs to Ask Good Questions}), showing that decomposing clinical inquiry quality into six fine-grained rubric attributes enables inference-time critique and preference alignment \cite{rafailov2023dpo} on \texttt{MediQ} \cite{li2024mediq}. This study examines whether inference-time ALFA checklists transfer to four-option MCQ generation across clinical medicine, K--12 school science/mathematics, and university STEM, law, economics, finance, and history, and whether replacing evaluative rubric adjectives with a formal boundary-pinning and register-decoupling schema improves psychometric validity and discrimination.
+
+To evaluate this hypothesis without synthetic data artifacts or judge order bias, I execute a 400-run live benchmark across $80$ SHA-256-verified verbatim cases ($20$ \texttt{MediQ} patient-inquiry cases, $20$ \texttt{MedQA-USMLE} clinical vignettes, $20$ K--12 Class 6--10 and first-year university PDF passages, and $20$ second-year university PDF passages) and $5$ experimental arms (\texttt{Arms 0..4}) under an exact $5\times 5$ cyclic Latin square. The contributions of this paper are fourfold:
+\begin{enumerate}
+  \item \textbf{Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP}) vs.\ ALFA Checklists (\texttt{Arms 0--4}):} I formulate a five-slot pre-generation planning architecture (\emph{Contrastive Confusion Locus} $\mathcal{C}$, \emph{Passage-Grounded Entailment} $\mathcal{G}$, \emph{Register-Decoupled Invariant} $\mathcal{R}_{\text{STE}}$, \emph{Eliminative Boundary Witness} $w^\star$, and \emph{Structured Fault-Injection Taxonomy} $\mathcal{F}_1\dots\mathcal{F}_5$; Table~\ref{tab:cbp}). Paired with a monotonic blind cold-solver (\texttt{Solver B}) rollback gate, \texttt{CBP} lifts overall cold-solve key validity across $60$ MCQ cases from $76.7\%$ (\texttt{arm-0-single-shot}) and $88.3\%$ (\texttt{arm-1-alfa-checklist}) to $95.0\%$ (\texttt{arm-3-cbp-rationale-stem}) and $91.7\%$ (\texttt{arm-4-cbp-factored-2x2}, $\pm 3.2\%$ binomial SE) with zero ALFA checklist attributes.
+  \item \textbf{Rubric--Validity Inversion and Monotonic Blind-Solver Rollback (\texttt{Arm 0} \& \texttt{Arm 2} vs.\ \texttt{Arms 3--4}):} I document \emph{Rubric--Validity Inversion}: holistic LLM judging awards its $\#1$ mean rubric score ($86.52$) to \texttt{arm-0-single-shot} despite a $23.3\%$ broken-key rate ($76.7\%$ valid keys). Furthermore, unguarded Pass-2 rubric self-repair (\texttt{arm-2-checklist-unguarded-pass2}, rewriting $80/80$ items) degrades overall key validity from $88.3\%$ to $85.0\%$ ($65.0\%$ on \texttt{MedQA-USMLE}). Enforcing a monotonic \texttt{Solver B} gate that retains Pass 1 whenever it is already cold-solve valid and rolls back any Pass-2 rewrite that breaks key validity preserves $91.7\%$--$95.0\%$ overall validity ($95.0\%$--$100.0\%$ on \texttt{MedQA-USMLE}).
+  \item \textbf{Resolving the In-Stem Spoiler Paradox via Factored $2\times 2$ Stems (\texttt{Arm 3} vs.\ \texttt{Arm 4}):} I formalize and measure the \emph{In-Stem Spoiler Paradox}: when a debative stem inlines each speaker's causal rationale (\texttt{arm-3-cbp-rationale-stem}), key validity reaches $95.0\%$ ($57/60$), but unprimed novices exploit the in-stem explanations, collapsing novice foil-bite rate to $8.3\%$ ($0.0\%$ on Track 2A; $D = +0.033$). Factoring all causal clauses out of \texttt{questionStem} (\texttt{sanitizePredictionOnlyStem}) into a crossed $2\times 2$ Speaker $\times$ Reason option grid (\texttt{arm-4-cbp-factored-2x2}) achieves $100.0\%$ factored compliance, raises novice foil-bite rate from $8.3\%$ to $15.0\%$ ($0.0\% \to 25.0\%$ on Track 2A), and doubles overall item discrimination $D$ from $+0.033$ to $+0.067$ ($D = +0.100$ on both Track 2A and Track 2B).
+  \item \textbf{Exact $5\times 5$ Cyclic Latin-Square Judging \& Pre-Treatment CUPED:} In a 5-candidate blinded LLM judge (\texttt{openai/gpt-4o-mini}, $T=0$), Candidate Slots 1 and 2 capture $54/80$ ($67.5\%$) of all first-place wins despite exact $[16,16,16,16,16]$ overall and $[4,4,4,4,4]$ per-track arm rotation. Balancing slot exposure via a $5\times 5$ cyclic Latin square and applying pre-treatment CUPED \cite{deng2013cuped} eliminates positional confounding.
+\end{enumerate}
+
+\section{Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP}) and Factored $2\times 2$ Stems}
+
+\begin{table*}[t]
+\centering
+\caption{Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP}) Architecture: Formal Psychometric Constructs, Schema Keys (\texttt{PlainHumanPlanSchema} in \texttt{src/reference-prompts.ts}), and \texttt{ASD-STE100} Register-Controlled Prompt Realizations Used in \texttt{arm-3-cbp-rationale-stem} and \texttt{arm-4-cbp-factored-2x2}.}
+\label{tab:cbp}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}p{0.28\textwidth}p{0.68\textwidth}@{}}
+\toprule
+\textbf{Formal CBP Construct} & \textbf{Schema Key, Word Cap \& \texttt{ASD-STE100} Register-Controlled Realization} \\
+\midrule
+1.\ \textbf{Contrastive Confusion Locus} ($\mathcal{C}$) & \textbf{Key:} \texttt{whyTwoAnswersLookRightAtFirst} ($\le 25$ words)\newline \emph{``If someone reads fast, which two answers both look right at first glance and why do people mix them up?''} \cite{gierl2017developing} \\
+\addlinespace[4pt]
+2.\ \textbf{Passage-Grounded Entailment} ($\mathcal{G}$) & \textbf{Key:} \texttt{whatActuallyHappens} ($\le 35$ words)\newline \emph{``Based strictly on the passage, what actually happens and why?''} \\
+\addlinespace[4pt]
+3.\ \textbf{Register-Decoupled Invariant} ($\mathcal{R}_{\text{STE}}$) & \textbf{Key:} \texttt{everydayExplanation} ($\le 30$ words)\newline \emph{``Explain that rule in plain, normal words you'd say to a friend---no stiff textbook buzzwords that tip off a guesser.''} (Prevents academic-register test-wiseness cues.) \\
+\addlinespace[4pt]
+4.\ \textbf{Eliminative Boundary Witness} ($w^\star$) & \textbf{Key:} \texttt{oneFactInQuestionThatSettlesIt} ($\le 25$ words)\newline \emph{``Name the exact number, lab result, line of code, or detail you are putting INSIDE the question so only one answer works and the other three are definitely wrong.''} \cite{haladyna2002developing} \\
+\addlinespace[4pt]
+5.\ \textbf{Structured Fault-Injection Taxonomy} ($\mathcal{F}_1\dots\mathcal{F}_5$) & \textbf{Key:} \texttt{threeCommonMistakes} (exact length $= 3$)\newline Select 3 distinct fault classes from $\{\mathcal{F}_1\dots\mathcal{F}_5\}$ (\texttt{TRUE\_GENERALLY\_\allowbreak DOESNT\_PROVE\_IT\_HERE}, \texttt{REVERSED\_THE\_\allowbreak DIRECTION\_OR\_SIGN}, \texttt{MISSED\_ONE\_KEY\_\allowbreak DETAIL\_IN\_SETUP}, \texttt{USED\_RULE\_WHERE\_\allowbreak REQUIREMENT\_FAILS}, \texttt{WENT\_WITH\_HABIT\_\allowbreak AGAINST\_GIVEN\_FACTS}), each bound to $w^\star$. \\
+\midrule
+\textbf{Clinical Differential Split} (\texttt{MediQ}, $N=20$) & \textbf{Key:} \texttt{plainPatientQuestion} ($\le 16$ words)\newline \texttt{mostLikelyCondition} vs.\ \texttt{closestLookalike\allowbreak Condition} $\to$ \texttt{oneSimpleQuestion\allowbreak ToTellThemApart} $\to$ emit one register-decoupled patient question ($\le 16$ words, zero medical jargon, non-leading). \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Theoretical Formulation of Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP})}
+In cognitive diagnostic assessment \cite{haladyna2002developing,lord1980applications,gierl2017developing} and structured argumentation \cite{toulmin2003uses}, zero-shot question generators fail in two complementary ways when prompted with abstract rubric checklists (e.g., ``maximize diagnostic information gain'' or ``ensure single-key exclusivity''):
+\begin{enumerate}
+  \item \textbf{Under-Constrained Boundary Specification ($P_{\text{valid}} < 1$):} Without an explicit slot requiring an in-stem boundary witness $w^\star$, the generator constructs distractors that represent valid alternative interpretations whenever boundary parameters are left implicit ($76.7\%$ valid key rate in \texttt{arm-0-single-shot}, $85.0\%$ in \texttt{arm-2-checklist-unguarded-pass2}).
+  \item \textbf{Academic-Register Test-Wiseness Leakage ($P_{\text{foil}} \to 0$):} When prompted with meta-linguistic rubric terminology, LLMs encode the correct option in dense academic register while phrasing distractors in simpler language, enabling test-wise novices to identify the key by surface register alone \cite{haladyna2002developing}.
+\end{enumerate}
+
+To solve both problems jointly, \textbf{Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP})} (Table~\ref{tab:cbp}) enforces a five-part structural decomposition prior to item realization:
+\begin{itemize}
+  \item \textbf{Contrastive Confusion Locus ($\mathcal{C}$):} Anchors the item around two competing hypotheses $(h^+, h^-)$ that share surface features under rapid reading.
+  \item \textbf{Passage-Grounded Entailment ($\mathcal{G}$):} Extracts the true domain entailment from the source passage $S$.
+  \item \textbf{Register-Decoupled Invariant ($\mathcal{R}_{\text{STE}}$):} Projects $\mathcal{G}$ into \texttt{ASD-STE100} Simplified Technical English (short, active-voice sentences without textbook giveaway buzzwords) so that both the key and distractors share identical lexical register.
+  \item \textbf{Eliminative Boundary Witness ($w^\star$):} Specifies a concrete parameter, measurement, or boundary constraint inlined directly inside \texttt{questionStem} such that $\mathcal{G} \cup \{w^\star\} \models h^+$ and $\mathcal{G} \cup \{w^\star\} \models \neg h_i^-$ for every distractor $i \in \{1,2,3\}$.
+  \item \textbf{Structured Fault-Injection Taxonomy ($\mathcal{F}_1\dots\mathcal{F}_5$):} Binds each of the three distractors to a distinct cognitive operator fault ($\mathcal{F}_1$: overgeneralized rule where sufficient condition fails; $\mathcal{F}_2$: inverted sign or causal direction; $\mathcal{F}_3$: omitted boundary tie-breaker $w^\star$; $\mathcal{F}_4$: violated prerequisite assumption; $\mathcal{F}_5$: habitual reflex contradicted by $w^\star$).
+\end{itemize}
+
+\subsection{The Five Experimental Arms (\texttt{Arms 0..4})}
+All five arms use \texttt{google/gemini-2.5-flash} as the producer model across the $80$ verbatim cases ($20$ \texttt{MediQ} \cite{li2024mediq}, $20$ \texttt{MedQA-USMLE} \cite{jin2021medqa}, $20$ Track 2A K--12 Class 6--10 \& First-Year University PDF spans, and $20$ Track 2B Second-Year University PDF spans):
+\begin{itemize}
+  \item \textbf{\texttt{arm-0-single-shot} (\emph{Single-Shot Monolithic Baseline}):} Single-shot prompt requesting a question stem, correct answer, three distractors, and explanation in one JSON pass ($T=0.35$).
+  \item \textbf{\texttt{arm-1-alfa-checklist} (\emph{Inference-Time ALFA Checklist}):} Inference-time 6-attribute ALFA prompt \cite{li2025alfa} conditioning generation on specificity, non-leading neutrality, answerability, single-key exclusivity, distractor plausibility, and diagnostic information gain ($T=0.35$).
+  \item \textbf{\texttt{arm-2-checklist-unguarded-pass2} (\emph{ALFA Checklist + Unguarded Pass-2 Rewrite}):} Two-pass ALFA checklist pipeline with an unguarded Pass-2 self-repair rewrite applied unconditionally across all $80/80$ cases.
+  \item \textbf{\texttt{arm-3-cbp-rationale-stem} (\emph{Contrastive Boundary Pinning --- Unfactored Rationale Stem}):} Register-Decoupled \texttt{CBP} planning slots (\texttt{PlainHumanPlanSchema}) + two speakers in \texttt{questionStem} stating competing predictions \emph{with} \emph{``because\dots''} rationales inlined in the stem ($4$ standard options, monotonic \texttt{Solver B} rollback gate; $T=0.25$ Pass 1, $T=0.20$ Pass 2).
+  \item \textbf{\texttt{arm-4-cbp-factored-2x2} (\emph{Contrastive Boundary Pinning --- Factored $2\times 2$ Stem}):} Register-Decoupled \texttt{CBP} planning slots (\texttt{PlainHumanPlanSchema}) + \textbf{Factored $2\times 2$ Stem}: two speakers in \texttt{questionStem} state \emph{only} bare outcome predictions---zero \emph{``because / since / due to''} causal clauses in \texttt{questionStem}, ending strictly on \emph{``Who is right, and why?''} with zero narrator words after \texttt{?} (\texttt{sanitizePredictionOnlyStem}), paired with a crossed $2\times 2$ Speaker $\times$ Reason option grid ($\pm 20\%$ word-length parity) and monotonic \texttt{Solver B} rollback gate.
+\end{itemize}
+
+\section{Empirical Results and Statistical Reproducibility}
+
+\begin{table*}[t]
+\centering
+\caption{Combined 80-Case Leaderboard ($400$ Live Generations; Exact $5\times 5$ Cyclic Latin Square $[16,16,16,16,16]$ Overall and $[4,4,4,4,4]$ per Sub-Track). Psychometric columns ($P_{\text{valid}}$, $P_{\text{foil}}$, $D$, Factored $2\times 2$~\%) are evaluated over all $60$ MCQ cases ($300$ MCQ runs; binomial $\text{SE} \approx \pm 3.2\%$); Judge Rubric, Wins, STE Clarity, Repairs/Rollbacks, and Cost cover all $80$ cases ($400$ runs).}
+\label{tab:overall}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llccccccccc@{}}
+\toprule
+\textbf{Arm} & \textbf{Slug} & \textbf{Rubric} & \textbf{1st Wins} & \textbf{Valid Key} & \textbf{Foil Bite} & \textbf{Discrim.\ $D$} & \textbf{Clarity} & \textbf{Factored $2\times 2$} & \textbf{Rep / Roll} & \textbf{Cost (\$)} \\
+\midrule
+Arm 0 & \texttt{arm-0-single-shot} & \textbf{86.52} & 29/80 (36.3\%) & 76.7\% & \textbf{23.3\%} & $+0.000$ & 94.5 & 0.0\% & 0 / 0 & 0.0627 \\
+Arm 1 & \texttt{arm-1-alfa-checklist} & 85.91 & 17/80 (21.3\%) & 88.3\% & 16.7\% & $+0.050$ & 95.2 & 0.0\% & 0 / 0 & 0.1536 \\
+Arm 2 & \texttt{arm-2-checklist-unguarded-pass2} & 85.45 & 16/80 (20.0\%) & 85.0\% & 20.0\% & $+0.050$ & 94.1 & 0.0\% & 80 / 0 & 0.2245 \\
+\midrule
+Arm 3 & \texttt{arm-3-cbp-rationale-stem} & 84.73 & 11/80 (13.8\%) & \textbf{95.0\%} & 8.3\% & $+0.033$ & 96.5 & 0.0\% & 5 / 3 & 0.2023 \\
+Arm 4 & \texttt{arm-4-cbp-factored-2x2} & 83.60 & 7/80 (8.8\%) & \textbf{91.7\%} & 15.0\% & \textbf{$+0.067$} & \textbf{97.4} & \textbf{100.0\%} & 4 / 5 & 0.2029 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\subsection{Finding 1: Contrastive Boundary Pinning + Monotonic Solver Gate Outperforms ALFA on Single-Key Validity}
+Table~\ref{tab:overall} reports the combined 80-case leaderboard across all $400$ runs. While inference-time ALFA (\texttt{arm-1-alfa-checklist}) improves cold-solver single-key validity over the single-shot baseline (\texttt{arm-0-single-shot}) from $76.7\%$ ($46/60$) to $88.3\%$ ($53/60$), applying an unguarded Pass-2 self-repair rewrite (\texttt{arm-2-checklist-unguarded-pass2}) degrades overall validity to $85.0\%$ ($51/60$; $65.0\%$ on \texttt{MedQA-USMLE}).
+
+By contrast, both Register-Decoupled \texttt{CBP} arms---which use zero ALFA checklist attributes---surpass \texttt{arm-1-alfa-checklist} ($88.3\%$):
+\begin{itemize}
+  \item \textbf{\texttt{arm-3-cbp-rationale-stem}} achieves \textbf{$95.0\%$ ($57/60$) cold-solve valid key rate} ($+18.3$ percentage points over \texttt{arm-0-single-shot} and $+6.7$ percentage points over \texttt{arm-1-alfa-checklist}), reaching \textbf{$100.0\%$ ($20/20$) on \texttt{MedQA-USMLE}} and \textbf{$95.0\%$ ($19/20$) on Track 2A}.
+  \item \textbf{\texttt{arm-4-cbp-factored-2x2}} achieves \textbf{$91.7\%$ ($55/60$) cold-solve valid key rate} ($+15.0$ percentage points over \texttt{arm-0-single-shot} and $+3.4$ percentage points over \texttt{arm-1-alfa-checklist}), reaching \textbf{$95.0\%$ ($19/20$) on \texttt{MedQA-USMLE}} and \textbf{$95.0\%$ ($19/20$) on Track 2B (Second-Year University)}. Across $N=60$ MCQs, one item corresponds to $1.67\%$ (binomial $\text{SE}_{60} = \pm 3.2\%$), demonstrating that \texttt{CBP} consistently maintains $>91\%$ single-key validity across both unfactored and factored stem designs.
+\end{itemize}
+
+\begin{table*}[t]
+\centering
+\caption{Sub-Track Breakdown Across Clinical Inquiry (\texttt{MediQ}), Clinical Vignette MCQs (\texttt{MedQA-USMLE}), K--12 \& First-Year University PDFs (Track 2A), and Second-Year University PDFs (Track 2B).}
+\label{tab:subtracks}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccccccccc@{}}
+\toprule
+& \multicolumn{3}{c}{\textbf{Medical Combined ($N=40$)}} & \multicolumn{4}{c}{\textbf{Track 2A: K--12 \& Univ Yr 1 ($N=20$)}} & \multicolumn{4}{c}{\textbf{Track 2B: Univ Yr 2 ($N=20$)}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-8} \cmidrule(l){9-12}
+\textbf{Arm Slug} & \textbf{Rubric} & \textbf{MedQA Valid} & \textbf{MedQA $D$} & \textbf{Rubric} & \textbf{Valid} & \textbf{Foil Bite} & \textbf{$D$} & \textbf{Rubric} & \textbf{Valid} & \textbf{Foil Bite} & \textbf{$D$} \\
+\midrule
+\texttt{arm-0-single-shot} & 86.85 & 70.0\% & $-0.050$ & \textbf{85.54} & 80.0\% & \textbf{25.0\%} & $+0.050$ & \textbf{86.82} & 80.0\% & \textbf{20.0\%} & $+0.000$ \\
+\texttt{arm-1-alfa-checklist} & \textbf{86.89} & 80.0\% & $+0.050$ & 85.04 & \textbf{95.0\%} & 5.0\% & $+0.000$ & 84.83 & 90.0\% & \textbf{20.0\%} & \textbf{$+0.100$} \\
+\texttt{arm-2-checklist-unguarded-pass2} & 85.76 & 65.0\% & $+0.000$ & 85.35 & \textbf{95.0\%} & 10.0\% & $+0.050$ & 84.92 & \textbf{95.0\%} & 15.0\% & \textbf{$+0.100$} \\
+\midrule
+\texttt{arm-3-cbp-rationale-stem} & 84.11 & \textbf{100.0\%} & \textbf{$+0.100$} & 85.29 & \textbf{95.0\%} & 0.0\% & $-0.050$ & 85.39 & 90.0\% & 15.0\% & $+0.050$ \\
+\texttt{arm-4-cbp-factored-2x2} & 82.78 & 95.0\% & $+0.000$ & 83.86 & 85.0\% & \textbf{25.0\%} & \textbf{$+0.100$} & 84.97 & \textbf{95.0\%} & 15.0\% & \textbf{$+0.100$} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\subsection{Finding 2: Factored $2\times 2$ Stems Resolve the In-Stem Spoiler Paradox}
+Comparing \texttt{arm-3-cbp-rationale-stem} against \texttt{arm-4-cbp-factored-2x2} in Tables~\ref{tab:overall} and~\ref{tab:subtracks} isolates the causal effect of factoring \emph{``because\dots''} rationales out of \texttt{questionStem} when holding the Register-Decoupled \texttt{CBP} planning schema and the monotonic \texttt{Solver B} gate constant:
+\begin{itemize}
+  \item In \textbf{\texttt{arm-3-cbp-rationale-stem}}, speakers state their \emph{``because\dots''} rationales inside \texttt{questionStem} ($0.0\%$ factored compliance). While the in-stem causal mechanisms assist the blind cold-solver ($95.0\%$ valid key rate), they trigger the \emph{In-Stem Spoiler Paradox} by leaking the governing rationale to the unprimed novice guesser: overall novice foil-bite rate drops to \textbf{$8.3\%$} ($0.0\%$ on Track 2A K--12 \& Year-1 spans, where novices guess $20/20$ items correctly without the passage, yielding $D = -0.050$).
+  \item In \textbf{\texttt{arm-4-cbp-factored-2x2}}, stripping all \emph{``because / since / due to''} clauses from \texttt{questionStem} via \texttt{sanitizePredictionOnlyStem} ($100.0\%$ strict factored $2\times 2$ compliance) and crossing $\text{Speaker } \{1,2\} \times \text{Reason } \{R_1,R_2\}$ in the options \textbf{increases overall novice foil-bite rate by $+80.7\%$ relative ($8.3\% \to 15.0\%$)}, \textbf{lifts Track 2A foil-bite rate from $0.0\%$ to $25.0\%$ ($D: -0.050 \to +0.100$)}, and \textbf{doubles overall item discrimination $D$ from $+0.033$ to $+0.067$} (the highest overall discrimination of all five arms), while achieving the highest \texttt{ASD-STE100} clarity score ($97.4/100$, $13.0$ words/sentence, $0.00$ jargon tokens).
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\caption{Exact $5\times 5$ Cyclic Latin-Square Slot Exposure and First-Place Judge Win Distribution Across Candidate Slots $1\dots 5$ ($N=80$ Cases; $[16,16,16,16,16]$ Overall and $[4,4,4,4,4]$ per Sub-Track). Despite exact uniform arm rotation, Slots 1 and 2 capture $54/80$ ($67.5\%$) of all first-place wins.}
+\label{tab:latinsquare}
+\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{Candidate Slot} & \textbf{Exposures / Arm} & \textbf{1st-Place Wins} & \textbf{Win Share (\%)} \\
+\midrule
+Slot 1 & 16 & 21 & 26.3\% \\
+Slot 2 & 16 & \textbf{33} & \textbf{41.3\%} \\
+Slot 3 & 16 & 10 & 12.5\% \\
+Slot 4 & 16 & 12 & 15.0\% \\
+Slot 5 & 16 & 4 & 5.0\% \\
+\midrule
+\textbf{Total (Slots 1--5)} & \textbf{80 / Arm} & \textbf{80} & \textbf{100.0\% (Slots 1+2 = 67.5\%)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Finding 3: Multi-Candidate Judge Positional Bias and Rubric--Validity Inversion}
+Tables~\ref{tab:overall} and~\ref{tab:latinsquare} highlight two methodological pitfalls in LLM-as-a-judge evaluation \cite{zheng2023judging}:
+\begin{enumerate}
+  \item \textbf{$67.5\%$ Slot 1--2 Positional Bias:} Even at $T=0$ with explicit system instructions to ignore presentation order, the 5-way judge awards $21/80$ ($26.3\%$) of first-place wins to Candidate Slot 1 and $33/80$ ($41.3\%$) to Candidate Slot 2---a combined \textbf{$67.5\%$ ($54/80$) win share for the first two slots}, compared to just $5.0\%$ ($4/80$) for Slot 5. The $5\times 5$ cyclic Latin square guarantees that every arm appears in each slot exactly $16$ times overall ($[16,16,16,16,16]$) and $4$ times per 20-case sub-track ($[4,4,4,4,4]$), canceling positional bias across arms.
+  \item \textbf{Rubric--Validity Inversion:} On the 0--100 holistic judge rubric, \texttt{arm-0-single-shot} scores highest ($86.52$, winning $29/80$ cases) despite having the \emph{lowest} blind cold-solver key validity ($76.7\%$, meaning $23.3\%$ of items have broken or ambiguous keys) and zero net item discrimination ($D = 0.000$). Conversely, the 5-way LLM judge penalizes the factored $2\times 2$ Speaker $\times$ Reason option layout of \texttt{arm-4-cbp-factored-2x2} ($83.60$ rubric; CUPED $\Delta = -1.129$ vs.\ \texttt{arm-3-cbp-rationale-stem}, $95\%$ CI $[-1.925, -0.333]$, $p = 0.0060$), even though \texttt{arm-4-cbp-factored-2x2} achieves $+15.0$ percentage points higher cold-solve key validity ($91.7\%$ vs.\ $76.7\%$), highest overall item discrimination ($D = +0.067$), and highest \texttt{ASD-STE100} clarity ($97.4$ vs.\ $94.5$). This confirms that holistic LLM judge rubrics reward familiar surface formatting over answer-key validity and must be paired with blind cold-solver verification and unprimed novice foil-bite testing.
+\end{enumerate}
+
+\section{Conclusion}
+This study has presented a 400-run, 5-arm benchmark evaluating inference-time ALFA checklists against Register-Decoupled Contrastive Boundary Pinning (\texttt{CBP}) and Factored $2\times 2$ stems under an exact $5\times 5$ cyclic Latin square. The results demonstrate that (1)~Register-Decoupled \texttt{CBP} with monotonic blind-solver gating achieves $91.7\%$--$95.0\%$ overall cold-solve key validity ($95.0\%$--$100.0\%$ on \texttt{MedQA-USMLE}) without any ALFA checklist attributes; (2)~factoring causal rationales out of debative stems into a $2\times 2$ Speaker $\times$ Reason option grid (\texttt{arm-4-cbp-factored-2x2}) resolves the In-Stem Spoiler Paradox, lifting novice foil-bite rate from $8.3\%$ to $15.0\%$ overall ($0.0\% \to 25.0\%$ on K--12 and Year-1 university passages) and doubling item discrimination $D$ from $+0.033$ to $+0.067$; and (3)~cyclic Latin-square rotation and blind solver/novice testing are essential to expose a $67.5\%$ Slot 1--2 positional bias and Rubric--Validity Inversion in holistic LLM judges.
+
+\appendix
+\section{Verbatim \texttt{ASD-STE100} Register-Controlled Prompts, Decoding Hyperparameters, and Binomial SEs}
+\label{app:prompts}
+
+All executable reference prompt builders and schema validators are provided in \texttt{src/reference-prompts.ts} and can be inspected or run live via \texttt{npm run replicate:live}.
+
+\subsection{Decoding Hyperparameters and Binomial Standard Errors}
+\begin{itemize}
+  \item \textbf{Producer Model (\texttt{google/gemini-2.5-flash}):} $T = 0.35$ for \texttt{arm-0-single-shot}, \texttt{arm-1-alfa-checklist}, and \texttt{arm-2-checklist-unguarded-pass2}; $T = 0.25$ for Pass-1 generation in \texttt{arm-3-cbp-rationale-stem} and \texttt{arm-4-cbp-factored-2x2} (\texttt{max\_tokens} $= 2100$ for MCQs, $1100$ for \texttt{MediQ}); $T = 0.20$ for conditional Pass-2 repair.
+  \item \textbf{Evaluator Model (\texttt{openai/gpt-4o-mini}):} $T = 0.0$ for the internal blind cold-solver (\texttt{Solver B}), external blind cold-solver, unprimed novice guesser (\texttt{max\_tokens} $= 250$), and $5\times 5$ cyclic Latin-square judge (\texttt{max\_tokens} $= 1200$).
+  \item \textbf{Binomial Standard Error ($N=60$ MCQs):} $\text{SE}_{60} = \sqrt{p(1-p)/60} \approx \pm 3.2\%$ ($\pm 1.9$ items out of $60$) at $p \in [91.7\%, 95.0\%]$; $\text{SE}_{20} \approx \pm 4.9\%$ ($\pm 1.0$ item out of $20$) per 20-case MCQ sub-track.
+\end{itemize}
+
+\subsection{\texttt{arm-0-single-shot} ($T=0.35$)}
+{\small
+\begin{verbatim}
+System: You are a <Specialty> assessment author.
+Write 1 challenging multiple-choice question (1 correct answer and 3
+plausible distractors) grounded strictly in the provided source passage.
+Return strictly JSON:
+{"stem":"...","correctAnswer":"...",
+ "distractors":["...","...","..."],"explanation":"..."}
+\end{verbatim}
+}
+
+\subsection{\texttt{arm-1-alfa-checklist} ($T=0.35$, Li et al.\ \texttt{arXiv:2502.14860})}
+{\small
+\begin{verbatim}
+System: You are an expert <Specialty> psychometrician implementing
+inference-time ALFA attribute alignment (arXiv:2502.14860). Condition
+your question generation on all 6 fine-grained ALFA quality attributes:
+(1) Specificity & Grounding, (2) Non-Leading Neutrality,
+(3) Answerability & Self-Containment, (4) Single-Key Exclusivity,
+(5) Distractor Plausibility, and (6) Diagnostic Information Gain.
+Return strictly JSON:
+{"alfaAttributePlan":{"targetConcept":"...","nonLeadingCheck":"...",
+ "distractorStrategy":"..."},"stem":"...","correctAnswer":"...",
+ "distractors":["...","...","..."],"explanation":"..."}
+\end{verbatim}
+}
+
+\subsection{\texttt{arm-3-cbp-rationale-stem} ($T=0.25$ Pass 1 / $T=0.20$ Guarded Pass 2)}
+{\small
+\begin{verbatim}
+STEP 1 - FILL OUT THIS EVERYDAY PLANNING CHECK BEFORE WRITING:
+- whyTwoAnswersLookRightAtFirst (<= 25 words): "If someone reads fast,
+  which two answers both look right at first glance and why do people
+  mix them up?"
+- whatActuallyHappens (<= 35 words): "Based strictly on the passage,
+  what actually happens and why?"
+- everydayExplanation (<= 30 words): "Explain that rule in plain,
+  normal words you'd say to a friend-no stiff textbook buzzwords that
+  tip off a guesser."
+- oneFactInQuestionThatSettlesIt (<= 25 words): "Name the exact number,
+  lab result, line of code, or detail you are putting INSIDE the
+  question so only one answer works and the other three are wrong."
+- threeCommonMistakes (exact length 3): Pick 3 distinct mistakeType
+  values from:
+  1. "TRUE_GENERALLY_DOESNT_PROVE_IT_HERE"
+  2. "REVERSED_THE_DIRECTION_OR_SIGN"
+  3. "MISSED_ONE_KEY_DETAIL_IN_SETUP"
+  4. "USED_RULE_WHERE_REQUIREMENT_FAILS"
+  5. "WENT_WITH_HABIT_AGAINST_GIVEN_FACTS"
+  For each mistake, fill in { mistakeType, whySomeonePicksIt,
+  exactDetailInQuestionThatBreaksIt, wrongChoiceText }.
+
+STEP 2 - WRITE THE TWO-SPEAKER DEBATE QUESTION (REASONS IN STEM):
+- Put every fact, number, or setup detail inside questionStem.
+- Inside questionStem, have Speaker 1 and Speaker 2 state their
+  competing predictions WITH their 'because...' reasons in the stem.
+- Write 4 standard plain-English answer choices (correctOption and
+  3 distractors) of similar word length (within +/-20%).
+\end{verbatim}
+}
+
+\subsection{\texttt{arm-4-cbp-factored-2x2} ($T=0.25$ Pass 1 / $T=0.20$ Guarded Pass 2)}
+{\small
+\begin{verbatim}
+STEP 1 - FILL OUT THIS EVERYDAY PLANNING CHECK BEFORE WRITING:
+  [Same 5 PlainHumanPlanSchema CBP slots as Arm 3 plus
+   speaker1PredictionOnly (<= 16 words) and speaker2PredictionOnly
+   (<= 16 words) with ZERO 'because / since / due to' reasons]
+
+STEP 2 - PREDICTION-ONLY QUESTION STEM (ZERO 'BECAUSE' IN STEM):
+- Put every fact, number, or setup detail inside questionStem.
+- Inside questionStem, Speaker 1 and Speaker 2 must state ONLY what
+  they predict will happen or do-NEVER write 'because', 'since',
+  'due to', or any explanation inside questionStem!
+- End questionStem strictly on "Who is right, and why?" with ZERO
+  narrator words after ? (enforced by sanitizePredictionOnlyStem).
+
+STEP 3 - 2x2 SPEAKER x REASON OPTION GRID (+/-20% WORD PARITY):
+- Split the 4 answer choices into an exact 2x2 grid: 2 choices
+  starting with 'Speaker 1 is right because ...' and 2 choices
+  starting with 'Speaker 2 is right because ...':
+  * correctOption: Winning speaker + true everyday reason.
+  * distractor 1: Same winning speaker + tempting wrong reason.
+  * distractor 2: Other speaker + wrong reason from mistake 2.
+  * distractor 3: Other speaker + wrong reason from mistake 3
+    broken by oneFactInQuestionThatSettlesIt.
+- Keep all 4 choices within +/-20% of the same word count.
+\end{verbatim}
+}
+
+\subsection{Register-Decoupled CBP \texttt{MediQ} Patient-Question Prompt ($N=20$ Clinical Cases)}
+{\small
+\begin{verbatim}
+System: You are a friendly <Specialty> doctor talking to a patient.
+Given an incomplete patient story, figure out the single best everyday
+question to ask the patient next:
+1. mostLikelyCondition (<= 15 words): Most likely condition right now?
+2. closestLookalikeCondition (<= 15 words): Closest look-alike?
+3. oneSimpleQuestionToTellThemApart (<= 20 words): What everyday
+   symptom or detail tells those two apart?
+4. plainPatientQuestion (<= 16 words): Write ONE natural, plain-English
+   question to ask the patient (<= 16 words, zero jargon, non-leading).
+5. whyThisAnswerSettlesIt (<= 30 words) & 6. whyItIsNonLeading.
+\end{verbatim}
+}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

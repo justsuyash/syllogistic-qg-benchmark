@@ -1,0 +1,31 @@
+{
+  "title": "Testing the Tester: Why Holistic LLM Judges Reward Broken Answer Keys—and How Contrastive Boundary Pinning Fixes Them",
+  "description": "Reproducible 400-run (80 verbatim cases x 5 experimental arms) benchmark under an exact 5x5 cyclic Latin square evaluating inference-time ALFA attribute checklists (arXiv:2502.14860) and unguarded Pass-2 rewrites against Register-Decoupled Contrastive Boundary Pinning (CBP, grounded in ASD-STE100 Simplified Technical English), monotonic blind-solver gating, unfactored rationale stems (arm-3-cbp-rationale-stem), and Factored 2x2 Speaker x Reason grids (arm-4-cbp-factored-2x2) across clinical medicine (MediQ, MedQA-USMLE), K-12 school curricula (Class 6-10), and 1st/2nd-year university STEM, law, economics, finance, and history.",
+  "upload_type": "dataset",
+  "license": "cc-by-4.0",
+  "creators": [
+    {
+      "name": "Suyash"
+    }
+  ],
+  "keywords": [
+    "question generation",
+    "educational psychometrics",
+    "item discrimination",
+    "Latin square evaluation",
+    "CUPED",
+    "ALFA",
+    "contrastive boundary pinning",
+    "factored 2x2 stems",
+    "ASD-STE100",
+    "MediQ",
+    "MedQA-USMLE"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "arXiv:2502.14860",
+      "relation": "references",
+      "scheme": "arxiv"
+    }
+  ]
+}
